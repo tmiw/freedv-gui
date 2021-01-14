@@ -24,17 +24,24 @@
 #include <cstring>
 #include "callsign_encoder.h"
 
-extern "C" {
-    extern int  golay23_encode(int data);
-    extern int  golay23_decode(int received_codeword);
-}
-
 CallsignEncoder::CallsignEncoder()
 {
     memset(&translatedCallsign_, 0, MAX_CALLSIGN);
     memset(&truncCallsign_, 0, MAX_CALLSIGN);
     memset(&callsign_, 0, MAX_CALLSIGN/2);
     clearReceivedText();
+    
+    // Initialize Hadamard codewords. Since we're only encoding three bits,
+    // we can just hardcode them here and brute force our way through the 
+    // decode.
+    hadamardCodewords_[0] = 0b00000000;
+    hadamardCodewords_[1] = 0b00001111;
+    hadamardCodewords_[2] = 0b00110011;
+    hadamardCodewords_[3] = 0b00111100;
+    hadamardCodewords_[4] = 0b01010101;
+    hadamardCodewords_[5] = 0b01011010;
+    hadamardCodewords_[6] = 0b01100110;
+    hadamardCodewords_[7] = 0b01101001;
 }
 
 CallsignEncoder::~CallsignEncoder()
@@ -52,8 +59,8 @@ void CallsignEncoder::setCallsign(const char* callsign)
     convert_callsign_to_ota_string_(callsign_, &translatedCallsign_[4]);
     
     unsigned char crc = calculateCRC8_((char*)&translatedCallsign_[4], strlen(&translatedCallsign_[4]));
-    translatedCallsign_[0] = 63;
-    translatedCallsign_[1] = 63;
+    translatedCallsign_[0] = 39;
+    translatedCallsign_[1] = 39;
     unsigned char crcDigit1 = crc >> 4;
     unsigned char crcDigit2 = crc & 0xF;
     convertDigitToASCII_(&translatedCallsign_[2], crcDigit1);
@@ -62,13 +69,16 @@ void CallsignEncoder::setCallsign(const char* callsign)
     int truncIndex = 0;
     for(int index = 0; index < strlen(translatedCallsign_); index += 2, truncIndex += 4)
     {
-        // Encode the character as four bytes with parity bits.
-        int inputRaw = ((translatedCallsign_[index] & 0x3F) << 6) | (translatedCallsign_[index+1] & 0x3F);
-        unsigned int outputEncoding = golay23_encode(inputRaw) & 0x7FFFFF;
-        truncCallsign_[truncIndex] = (unsigned int)(outputEncoding >> 18) & 0x3F;
-        truncCallsign_[truncIndex + 1] = (unsigned int)(outputEncoding >> 12) & 0x3F;
-        truncCallsign_[truncIndex + 2] = (unsigned int)(outputEncoding >> 6) & 0x3F;
-        truncCallsign_[truncIndex + 3] = (unsigned int)outputEncoding & 0x3F;
+        // Encode two characters as four bytes and interleave them together.
+        hadamardEncodeSymbol_(translatedCallsign_[index], &truncCallsign_[truncIndex]);
+        hadamardEncodeSymbol_(translatedCallsign_[index + 1], &truncCallsign_[truncIndex + 2]);
+        //fprintf(stderr, "tx: 0 = %x, 1 = %x, 2 = %x, 3 = %x\n", truncCallsign_[truncIndex], truncCallsign_[truncIndex+1], truncCallsign_[truncIndex+2], truncCallsign_[truncIndex+3]);
+        interleave_(&truncCallsign_[truncIndex]);
+        /*fprintf(stderr, "tx: 0 = %x, 1 = %x, 2 = %x, 3 = %x\n", truncCallsign_[truncIndex], truncCallsign_[truncIndex+1], truncCallsign_[truncIndex+2], truncCallsign_[truncIndex+3]);
+        deinterleave_(&truncCallsign_[truncIndex]);
+        fprintf(stderr, "tx: 0 = %x, 1 = %x, 2 = %x, 3 = %x\n", truncCallsign_[truncIndex], truncCallsign_[truncIndex+1], truncCallsign_[truncIndex+2], truncCallsign_[truncIndex+3]);
+        fprintf(stderr, "======\n");
+        interleave_(&truncCallsign_[truncIndex]);*/
     }
 }
 
@@ -89,20 +99,23 @@ void CallsignEncoder::pushReceivedByte(char incomingChar)
         if (pendingGolayBytes_.size() >= 4)
         {
             // Minimum number of characters received to begin attempting sync.
-            unsigned int encodedInput =
-                (pendingGolayBytes_[pendingGolayBytes_.size() - 4] << 18) |
-                (pendingGolayBytes_[pendingGolayBytes_.size() - 3] << 12) |
-                (pendingGolayBytes_[pendingGolayBytes_.size() - 2] << 6) |
-                pendingGolayBytes_[pendingGolayBytes_.size() - 1];
-            
-            encodedInput &= 0x7FFFFF;                
-            int rawOutput = golay23_decode(encodedInput) >> 11;
+            // Strip out MSB of each byte as it's not used for encoding.
+            char temp[4];
+            temp[0] = pendingGolayBytes_[pendingGolayBytes_.size() - 4] & 0x7F;
+            temp[1] = pendingGolayBytes_[pendingGolayBytes_.size() - 3] & 0x7F;
+            temp[2] = pendingGolayBytes_[pendingGolayBytes_.size() - 2] & 0x7F;
+            temp[3] = pendingGolayBytes_[pendingGolayBytes_.size() - 1] & 0x7F;
+            deinterleave_(temp);
+
+            //fprintf(stderr, "rx: 0 = %x, 1 = %x, 2 = %x, 3 = %x\n", temp[0], temp[1], temp[2], temp[3]);
             char rawStr[3];
             char decodedStr[3];
             
-            rawStr[0] = ((unsigned int)rawOutput) >> 6;
-            rawStr[1] = ((unsigned int)rawOutput) & 0x3F;
+            hadamardDecodeSymbol_(&temp[0], &rawStr[0], false);
+            hadamardDecodeSymbol_(&temp[2], &rawStr[1], false);
             rawStr[2] = 0;
+            
+            fprintf(stderr, "rx: 0 = %x, 1 = %x\n", rawStr[0], rawStr[1]);
             
             convert_ota_string_to_callsign_(rawStr, decodedStr);
             if (decodedStr[0] == 0x7F && decodedStr[1] == 0x7F)
@@ -120,29 +133,28 @@ void CallsignEncoder::pushReceivedByte(char incomingChar)
         while (pendingGolayBytes_.size() >= 4)
         {
             // Minimum number of characters received.
-            int encodedInput =
-                (pendingGolayBytes_[0] << 18) |
-                (pendingGolayBytes_[1] << 12) |
-                (pendingGolayBytes_[2] << 6) |
-                pendingGolayBytes_[3];
-            encodedInput &= 0x7FFFFF;
-                            
-            int rawOutput = golay23_decode(encodedInput) >> 11;
+            // Strip out MSB of each byte as it's not used for encoding.
+            char temp[4];
+            temp[0] = pendingGolayBytes_[0] & 0x7F;
+            temp[1] = pendingGolayBytes_[1] & 0x7F;
+            temp[2] = pendingGolayBytes_[2] & 0x7F;
+            temp[3] = pendingGolayBytes_[3] & 0x7F;
             pendingGolayBytes_.pop_front();
             pendingGolayBytes_.pop_front();
             pendingGolayBytes_.pop_front();
             pendingGolayBytes_.pop_front();
+            deinterleave_(temp);
             char rawStr[3];
             char decodedStr[3];
             
-            rawStr[0] = ((unsigned int)rawOutput) >> 6;
-            rawStr[1] = ((unsigned int)rawOutput) & 0x3F;
+            hadamardDecodeSymbol_(&temp[0], &rawStr[0], true);
+            hadamardDecodeSymbol_(&temp[2], &rawStr[1], true);
             rawStr[2] = 0;
                         
             fprintf(stderr, "rx: 1=%x, 2=%x\n", rawStr[0], rawStr[1]);
             convert_ota_string_to_callsign_(rawStr, decodedStr);
 
-            if ((decodedStr[0] == '\r' || decodedStr[1] == 0x7F) || ((pReceivedCallsign_ - &receivedCallsign_[0]) > MAX_CALLSIGN-1))
+            if ((decodedStr[0] == '\r' || decodedStr[0] == 0x7F || decodedStr[0] == 0) || ((pReceivedCallsign_ - &receivedCallsign_[0]) > MAX_CALLSIGN-1))
             {                        
                 // CR or sync completes line
                 if (pReceivedCallsign_ != &receivedCallsign_[0])
@@ -151,7 +163,7 @@ void CallsignEncoder::pushReceivedByte(char incomingChar)
                     pReceivedCallsign_ = &receivedCallsign_[0];
                 }
             }
-            else if (decodedStr[0] != '\0')
+            else
             {
                 // Ignore incoming nulls but wipe anything to the right of the current pointer
                 // if we're overwriting one.
@@ -162,7 +174,7 @@ void CallsignEncoder::pushReceivedByte(char incomingChar)
                 *pReceivedCallsign_++ = decodedStr[0];
             }
             
-            if ((decodedStr[1] == '\r' || decodedStr[1] == 0x7F) || ((pReceivedCallsign_ - &receivedCallsign_[0]) > MAX_CALLSIGN-1))
+            if ((decodedStr[1] == '\r' || decodedStr[1] == 0x7F || decodedStr[1] == 0) || ((pReceivedCallsign_ - &receivedCallsign_[0]) > MAX_CALLSIGN-1))
             {
                 // CR/sync completes line
                 if (pReceivedCallsign_ != &receivedCallsign_[0])
@@ -171,7 +183,7 @@ void CallsignEncoder::pushReceivedByte(char incomingChar)
                     pReceivedCallsign_ = &receivedCallsign_[0];
                 }
             }
-            else if (decodedStr[1] != '\0')
+            else
             {
                 // Ignore incoming nulls but wipe anything to the right of the current pointer
                 // if we're overwriting one.
@@ -206,13 +218,11 @@ bool CallsignEncoder::isCallsignValid() const
 
 // 6 bit character set for text field use:
 // 0: ASCII null
-// 1-9: ASCII 38-47
-// 10-19: ASCII '0'-'9'
-// 20-46: ASCII 'A'-'Z'
-// 47: ASCII ' '
-// 48: ASCII '\r'
-// 48-62: TBD/for future use.
-// 63: sync (2x in a 2 byte block indicates sync)
+// 1-26: ASCII 'A'-'Z'
+// 27-36: ASCII '0'-'9'
+// 37: ASCII '/'
+// 38: TBD/for future use.
+// 39: sync
 void CallsignEncoder::convert_callsign_to_ota_string_(const char* input, char* output) const
 {
     int outidx = 0;
@@ -220,30 +230,22 @@ void CallsignEncoder::convert_callsign_to_ota_string_(const char* input, char* o
     for (int index = 0; index < strlen(input); index++)
     {
         bool addSync = false;
-        if (input[index] >= 38 && input[index] <= 47)
+        if (input[index] >= 'A' && input[index] <= 'Z')
         {
-            output[outidx++] = input[index] - 37;
+            output[outidx++] = input[index] - 'A' + 1;
         }
         else if (input[index] >= '0' && input[index] <= '9')
         {
-            output[outidx++] = input[index] - '0' + 10;
+            output[outidx++] = (input[index] - '0') + 27;
         }
-        else if (input[index] >= 'A' && input[index] <= 'Z')
+        else if (input[index] == '/')
         {
-            output[outidx++] = input[index] - 'A' + 20;
-        }
-        else if (input[index] >= 'a' && input[index] <= 'z')
-        {
-            output[outidx++] = toupper(input[index]) - 'A' + 20;
-        }
-        else if (input[index] == '\r')
-        {
-            output[outidx++] = 48;
+            output[outidx++] = 37;
         }
         else
         {
-            // Invalid characters become spaces.
-            output[outidx++] = 47;
+            // Invalid characters are sync characters.
+            output[outidx++] = 39;
         }
     }
     
@@ -251,10 +253,10 @@ void CallsignEncoder::convert_callsign_to_ota_string_(const char* input, char* o
     // on the current length.
     if (outidx % 2)
     {
-        output[outidx++] = 63;
+        output[outidx++] = 39;
     }
-    output[outidx++] = 63;
-    output[outidx++] = 63;
+    output[outidx++] = 39;
+    output[outidx++] = 39;
     output[outidx] = 0;
 }
 
@@ -263,24 +265,21 @@ void CallsignEncoder::convert_ota_string_to_callsign_(const char* input, char* o
     int outidx = 0;
     for (int index = 0; index < strlen(input); index++)
     {
-        if (input[index] >= 1 && input[index] <= 9)
+        if (input[index] >= 1 && input[index] <= 26)
         {
-            output[outidx++] = input[index] + 37;
-        }
-        else if (input[index] >= 10 && input[index] <= 19)
-        {
-            output[outidx++] = input[index] - 10 + '0';
-        }
-        else if (input[index] >= 20 && input[index] <= 46)
-        {
-            output[outidx++] = input[index] - 20 + 'A';
-        }
-        else if (input[index] == 48)
-        {
-            output[outidx++] = '\r';
-        }
-        else if (input[index] == 63)
-        {
+            output[outidx++] = (input[index] - 1) + 'A';
+         }
+        else if (input[index] >= 27 && input[index] <= 36)
+         {
+            output[outidx++] = (input[index] - 27) + '0';
+         }
+        else if (input[index] == 37)
+         {
+            output[outidx++] = '/';
+         }
+        // 38 is TBD
+        else if (input[index] == 39)
+         {
             // Use ASCII 0x7F to signify sync. The caller will need to strip this out.
             output[outidx++] = 0x7F;
         }
@@ -304,7 +303,7 @@ unsigned char CallsignEncoder::calculateCRC8_(char* input, int length) const
         length--;
 
         // Ignore 6-bit carriage return and sync characters.
-        if (ch == 63 || ch == 48) continue;
+        if (ch == 39) continue;
         
         crc ^= ch; /* XOR-in the next input byte */
         
@@ -328,11 +327,11 @@ void CallsignEncoder::convertDigitToASCII_(char* dest, unsigned char digit)
 {
     if (digit >= 0 && digit <= 9)
     {
-        *dest = digit + 10; // using 6 bit character set defined above.
+        *dest = digit + 27; // using 6 bit character set defined above.
     }
     else if (digit >= 0xA && digit <= 0xF)
     {
-        *dest = (digit - 0xA) + 20; // using 6 bit character set defined above.
+        *dest = (digit - 0xA); // using 6 bit character set defined above.
     }
     else
     {
@@ -361,4 +360,149 @@ unsigned char CallsignEncoder::convertHexStringToDigit_(char* src) const
     }
     
     return ret;
+}
+
+// Note: symbol1 and symbol2 must be <= 0x7F, which is possible since the
+// current Hadamard encoding always uses MSB = 0.
+int CallsignEncoder::hammingDistance_(char symbol1, char symbol2)
+{
+    //fprintf(stderr, "dist(%x,%x) = ", symbol1, symbol2);
+    int result = 0;
+    while (symbol1 > 0 || symbol2 > 0)
+    {
+        result += (symbol1 & 1) ^ (symbol2 & 1);
+        symbol1 >>= 1;
+        symbol2 >>= 1;
+    }
+    //fprintf(stderr, "%d\n", result);
+    return result;
+}
+
+void CallsignEncoder::hadamardEncodeSymbol_(const char input, char* output)
+{
+    int msb = (input >> 3) & 0b111;
+    int lsb = input & 0b111;
+    
+    output[0] = hadamardCodewords_[msb];
+    output[1] = hadamardCodewords_[lsb];
+}
+
+void CallsignEncoder::hadamardDecodeSymbol_(const char* input, char* output, bool inSync)
+{
+    // 6 bit character encodes as 2 bytes.
+    // Due to only using 39 characters in our character set, the MSB
+    // can only be 000, 001, 010, 011 or 100 once decoded. Thus, we restrict our
+    // sample sapce accordingly.
+    int decodedWord = 0;
+    for (int index = 0; index < 2; index++)
+    {
+        int maxWord = (index == 0 && inSync) ? 0b100 : 0b111;
+        char inp = input[index];
+        int minDistance = 0b111;
+        int minWord = 0;
+        for (int codeword = 0; codeword <= maxWord; codeword++)
+        {
+            int dist = hammingDistance_(hadamardCodewords_[codeword], inp);
+            if (dist < minDistance)
+            {
+                // TBD: handle multiple possible decoding options.
+                minWord = codeword;
+                minDistance = dist;
+            }
+        }
+        decodedWord = (decodedWord << 3) | minWord;
+        //fprintf(stderr, "decode: idx = %d, minWord = %x, minDist = %d, decodedWord = %x\n", index, minWord, minDistance, decodedWord);
+    }
+    output[0] = decodedWord;
+}
+
+#define GET_BIT(ch, bit) (((ch & (1 << bit)) >> bit) & 1)
+#define PLACE_BIT(ch, bitFrom, bitTo) (GET_BIT(ch, bitFrom) << bitTo)
+
+void CallsignEncoder::interleave_(char* input)
+{
+    char byte1 = 
+        PLACE_BIT(input[0], 6, 6) |
+        PLACE_BIT(input[1], 6, 5) |
+        PLACE_BIT(input[2], 6, 4) |
+        PLACE_BIT(input[3], 6, 3) |
+        PLACE_BIT(input[0], 5, 2) |
+        PLACE_BIT(input[1], 5, 1) |
+        PLACE_BIT(input[2], 5, 0);
+    
+    char byte2 = 
+        PLACE_BIT(input[3], 5, 6) |
+        PLACE_BIT(input[0], 4, 5) |
+        PLACE_BIT(input[1], 4, 4) |
+        PLACE_BIT(input[2], 4, 3) |
+        PLACE_BIT(input[3], 4, 2) |
+        PLACE_BIT(input[0], 3, 1) |
+        PLACE_BIT(input[1], 3, 0);
+    
+    char byte3 = 
+        PLACE_BIT(input[2], 3, 6) |
+        PLACE_BIT(input[3], 3, 5) |
+        PLACE_BIT(input[0], 2, 4) |
+        PLACE_BIT(input[1], 2, 3) |
+        PLACE_BIT(input[2], 2, 2) |
+        PLACE_BIT(input[3], 2, 1) |
+        PLACE_BIT(input[0], 1, 0);
+    
+    char byte4 = 
+        PLACE_BIT(input[1], 1, 6) |
+        PLACE_BIT(input[2], 1, 5) |
+        PLACE_BIT(input[3], 1, 4) |
+        PLACE_BIT(input[0], 0, 3) |
+        PLACE_BIT(input[1], 0, 2) |
+        PLACE_BIT(input[2], 0, 1) |
+        PLACE_BIT(input[3], 0, 0);
+    
+    input[0] = byte1;
+    input[1] = byte2;
+    input[2] = byte3;
+    input[3] = byte4;
+}
+
+void CallsignEncoder::deinterleave_(char* input)
+{
+    char byte1 = 
+        PLACE_BIT(input[0], 6, 6) |
+        PLACE_BIT(input[0], 2, 5) |
+        PLACE_BIT(input[1], 5, 4) |
+        PLACE_BIT(input[1], 1, 3) |
+        PLACE_BIT(input[2], 4, 2) |
+        PLACE_BIT(input[2], 0, 1) |
+        PLACE_BIT(input[3], 3, 0);
+    
+    char byte2 = 
+        PLACE_BIT(input[0], 5, 6) |
+        PLACE_BIT(input[0], 1, 5) |
+        PLACE_BIT(input[1], 4, 4) |
+        PLACE_BIT(input[1], 0, 3) |
+        PLACE_BIT(input[2], 3, 2) |
+        PLACE_BIT(input[3], 6, 1) |
+        PLACE_BIT(input[3], 2, 0);
+    
+    char byte3 = 
+        PLACE_BIT(input[0], 4, 6) |
+        PLACE_BIT(input[0], 0, 5) |
+        PLACE_BIT(input[1], 3, 4) |
+        PLACE_BIT(input[2], 6, 3) |
+        PLACE_BIT(input[2], 2, 2) |
+        PLACE_BIT(input[3], 5, 1) |
+        PLACE_BIT(input[3], 1, 0);
+    
+    char byte4 = 
+        PLACE_BIT(input[0], 3, 6) |
+        PLACE_BIT(input[1], 6, 5) |
+        PLACE_BIT(input[1], 2, 4) |
+        PLACE_BIT(input[2], 5, 3) |
+        PLACE_BIT(input[2], 1, 2) |
+        PLACE_BIT(input[3], 4, 1) |
+        PLACE_BIT(input[3], 0, 0);
+    
+    input[0] = byte1;
+    input[1] = byte2;
+    input[2] = byte3;
+    input[3] = byte4;
 }

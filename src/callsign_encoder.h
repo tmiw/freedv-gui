@@ -44,6 +44,7 @@ public:
     const char* getReceivedText() const { return &receivedCallsign_[2]; }
     
 private:
+    unsigned char hadamardCodewords_[8];
     std::deque<unsigned char> pendingGolayBytes_;
     bool textInSync_;
     
@@ -53,7 +54,13 @@ private:
     
     char receivedCallsign_[MAX_CALLSIGN];
     char* pReceivedCallsign_;
-    
+
+    void hadamardEncodeSymbol_(const char input, char* output);
+    void hadamardDecodeSymbol_(const char* input, char* output, bool inSync);
+    int hammingDistance_(char symbol1, char symbol2);
+    void interleave_(char* input);
+    void deinterleave_(char* input);
+
     void convert_callsign_to_ota_string_(const char* input, char* output) const;
     void convert_ota_string_to_callsign_(const char* input, char* output);
     
