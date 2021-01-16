@@ -69,7 +69,7 @@ void CallsignEncoder::setCallsign(const char* callsign)
     convertDigitToASCII_(&translatedCallsign_[3], crcDigit2);
     
     int truncIndex = 0;
-    for(int index = 0; index < strlen(translatedCallsign_); index += 2, truncIndex += 4)
+    for(size_t index = 0; index < strlen(translatedCallsign_); index += 2, truncIndex += 4)
     {
         // Encode two characters as four bytes and interleave them together.
         hadamardEncodeSymbol_(translatedCallsign_[index], &truncCallsign_[truncIndex]);
@@ -237,8 +237,8 @@ bool CallsignEncoder::isCallsignValid() const
 void CallsignEncoder::convert_callsign_to_ota_string_(const char* input, char* output) const
 {
     int outidx = 0;
-    
-    for (int index = 0; index < strlen(input); index++)
+
+    for (size_t index = 0; index < strlen(input); index++)
     {
         if (input[index] >= 'A' && input[index] <= 'Z')
         {
@@ -273,7 +273,7 @@ void CallsignEncoder::convert_callsign_to_ota_string_(const char* input, char* o
 void CallsignEncoder::convert_ota_string_to_callsign_(const char* input, char* output)
 {
     int outidx = 0;
-    for (int index = 0; index < strlen(input); index++)
+    for (size_t index = 0; index < strlen(input); index++)
     {
         if (input[index] >= 1 && input[index] <= 26)
         {
