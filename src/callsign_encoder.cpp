@@ -22,6 +22,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 #include "callsign_encoder.h"
 
 CallsignEncoder::CallsignEncoder()
