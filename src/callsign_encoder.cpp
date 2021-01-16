@@ -42,6 +42,8 @@ CallsignEncoder::CallsignEncoder()
     hadamardCodewords_[5] = 0b01011010;
     hadamardCodewords_[6] = 0b01100110;
     hadamardCodewords_[7] = 0b01101001;
+    
+    srand (time(NULL));
 }
 
 CallsignEncoder::~CallsignEncoder()
@@ -115,6 +117,8 @@ void CallsignEncoder::pushReceivedByte(char incomingChar)
             hadamardDecodeSymbol_(&temp[2], &rawStr[1], false);
             rawStr[2] = 0;
             
+            if (rawStr[0] == 0 || rawStr[1] == 0) return;
+            
             fprintf(stderr, "rx: 0 = %x, 1 = %x\n", rawStr[0], rawStr[1]);
             
             convert_ota_string_to_callsign_(rawStr, decodedStr);
@@ -150,7 +154,14 @@ void CallsignEncoder::pushReceivedByte(char incomingChar)
             hadamardDecodeSymbol_(&temp[0], &rawStr[0], true);
             hadamardDecodeSymbol_(&temp[2], &rawStr[1], true);
             rawStr[2] = 0;
-                        
+            
+            if (rawStr[0] == 0 || rawStr[1] == 0)
+            {
+                fprintf(stderr, "lost sync\n");
+                textInSync_ = false;
+                break;
+            }
+            
             fprintf(stderr, "rx: 1=%x, 2=%x\n", rawStr[0], rawStr[1]);
             convert_ota_string_to_callsign_(rawStr, decodedStr);
 
@@ -229,7 +240,6 @@ void CallsignEncoder::convert_callsign_to_ota_string_(const char* input, char* o
     
     for (int index = 0; index < strlen(input); index++)
     {
-        bool addSync = false;
         if (input[index] >= 'A' && input[index] <= 'Z')
         {
             output[outidx++] = input[index] - 'A' + 1;
@@ -387,32 +397,95 @@ void CallsignEncoder::hadamardEncodeSymbol_(const char input, char* output)
     output[1] = hadamardCodewords_[lsb];
 }
 
+struct HadamardDecodeOption
+{
+    char decodedBits;
+    int distance;
+};
+
 void CallsignEncoder::hadamardDecodeSymbol_(const char* input, char* output, bool inSync)
 {
     // 6 bit character encodes as 2 bytes.
     // Due to only using 39 characters in our character set, the MSB
     // can only be 000, 001, 010, 011 or 100 once decoded. Thus, we restrict our
     // sample sapce accordingly.
+    std::vector<HadamardDecodeOption> decodes[2];
+    
+    // Generate all decode possibilities.
     int decodedWord = 0;
     for (int index = 0; index < 2; index++)
     {
         int maxWord = (index == 0 && inSync) ? 0b100 : 0b111;
         char inp = input[index];
-        int minDistance = 0b111;
+        int minDistance = 3;
         int minWord = 0;
         for (int codeword = 0; codeword <= maxWord; codeword++)
         {
             int dist = hammingDistance_(hadamardCodewords_[codeword], inp);
+            HadamardDecodeOption decode;
+            decode.decodedBits = codeword;
+            decode.distance = dist;
+            decodes[index].push_back(decode);
+            
             if (dist < minDistance)
             {
-                // TBD: handle multiple possible decoding options.
-                minWord = codeword;
                 minDistance = dist;
             }
         }
-        decodedWord = (decodedWord << 3) | minWord;
-        //fprintf(stderr, "decode: idx = %d, minWord = %x, minDist = %d, decodedWord = %x\n", index, minWord, minDistance, decodedWord);
+        
+        // Eliminate all but the minimum distance options.
+        auto iter = decodes[index].begin();
+        while (iter != decodes[index].end())
+        {
+            if (iter->distance != minDistance)
+            {
+                iter = decodes[index].erase(iter);
+            }
+            else
+            {
+                iter++;
+            }
+        }
     }
+    
+    // Generate list of characters from the two lists of bits. These are the choices
+    // we have to choose from.
+    std::vector<char> choices;
+    for (int leftIndex = 0; leftIndex < decodes[0].size(); leftIndex++)
+    {
+        for (int rightIndex = 0; rightIndex < decodes[1].size(); rightIndex++)
+        {
+            choices.push_back((decodes[0][leftIndex].decodedBits << 3) | (decodes[1][rightIndex].decodedBits));
+        }
+    }
+    
+    //fprintf(stderr, "Number of possible decode choices before pruning: %d\n", choices.size());
+    
+    // Prune obviously bad choices, but only if we're already in sync. Otherwise, we could inadvertently 
+    // decide that the character is a sync character or similar.
+    if (inSync)
+    {
+        auto iter = choices.begin();
+        while (iter != choices.end())
+        {
+            if (*iter == 0 || *iter >= 40)
+            {
+                iter = choices.erase(iter);
+            }
+            else
+            {
+                iter++;
+            }
+        }
+    }
+    
+    // If we only have a single option on both sides of the character, that's likely our character.
+    // Otherwise, we might need to resync.
+    if (choices.size() == 1);
+    {
+        decodedWord = choices[0];
+    }
+
     output[0] = decodedWord;
 }
 
