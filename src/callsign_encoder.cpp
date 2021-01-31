@@ -424,7 +424,7 @@ void CallsignEncoder::hadamardDecodeSymbol_(const char* input, char* output, boo
     {
         int maxWord = (index == 0 && inSync) ? 0b100 : 0b111;
         char inp = input[index];
-        int minDistance = 3;
+        int minDistance = 99;
         int minWord = 0;
         for (int codeword = 0; codeword <= maxWord; codeword++)
         {
@@ -470,7 +470,7 @@ void CallsignEncoder::hadamardDecodeSymbol_(const char* input, char* output, boo
     
     // Prune obviously bad choices, but only if we're already in sync. Otherwise, we could inadvertently 
     // decide that the character is a sync character or similar.
-    if (inSync)
+    //if (inSync)
     {
         auto iter = choices.begin();
         while (iter != choices.end())
@@ -488,7 +488,7 @@ void CallsignEncoder::hadamardDecodeSymbol_(const char* input, char* output, boo
     
     // If we only have a single option on both sides of the character, that's likely our character.
     // Otherwise, we might need to resync.
-    if (choices.size() == 1);
+    if (choices.size() > 0);
     {
         decodedWord = choices[0];
     }
