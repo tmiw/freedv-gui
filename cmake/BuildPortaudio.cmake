@@ -22,7 +22,7 @@ else()
     set(CONFIGURE_COMMAND ./configure --enable-cxx --enable-option-checking --without-alsa --without-jack --without-oss --without-asihpi --without-winapi --disable-shared --prefix=${CMAKE_BINARY_DIR}/external/dist CFLAGS=-g\ -O2\ -mmacosx-version-min=10.9 LDFLAGS=-framework\ CoreServices\ -framework\ AudioUnit\ -framework\ CoreFoundation\ -framework\ AudioToolbox\ -framework\ CoreAudio)
 endif(BUILD_OSX_UNIVERSAL)
 else()
-    set(CONFIGURE_COMMAND ./configure --enable-cxx --without-jack --disable-shared --prefix=${CMAKE_BINARY_DIR}/external/dist)
+    set(CONFIGURE_COMMAND autoreconf -i && ./configure --enable-cxx --without-jack --with-pulseaudio --disable-shared --prefix=${CMAKE_BINARY_DIR}/external/dist)
 endif()
 
 include(ExternalProject)
@@ -38,7 +38,9 @@ ExternalProject_Add(portaudio
 )
 else()
 ExternalProject_Add(portaudio
-    URL http://www.portaudio.com/archives/${PORTAUDIO_TARBALL}.tgz
+    #URL http://www.portaudio.com/archives/${PORTAUDIO_TARBALL}.tgz
+    GIT_REPOSITORY https://github.com/tmiw/portaudio.git
+    GIT_TAG PulseAudioHostAPI
     BUILD_IN_SOURCE 1
     INSTALL_DIR external/dist
     CONFIGURE_COMMAND ${CONFIGURE_COMMAND}
@@ -46,7 +48,14 @@ ExternalProject_Add(portaudio
     INSTALL_COMMAND $(MAKE) install
 )
 endif()
-set(PORTAUDIO_LIBRARIES ${CMAKE_BINARY_DIR}/external/dist/lib/libportaudio.a)
+
+get_property(LIB64 GLOBAL PROPERTY FIND_LIBRARY_USE_LIB64_PATHS)
+if(LIB64)
+    set(PORTAUDIO_LIB_SUFFIX "64")
+else()
+    set(PORTAUDIO_LIB_SUFFIX "")
+endif(LIB64)
+set(PORTAUDIO_LIBRARIES ${CMAKE_BINARY_DIR}/external/dist/lib${PORTAUDIO_LIB_SUFFIX}/libportaudio.a)
 
 if(WIN32)
     find_library(WINMM winmm)
@@ -56,7 +65,8 @@ if(WIN32)
 elseif(NOT APPLE)
     find_library(RT rt)
     find_library(ASOUND asound)
-    list(APPEND PORTAUDIO_LIBRARIES ${RT} ${ASOUND}
+    find_library(PULSE pulse)
+    list(APPEND PORTAUDIO_LIBRARIES ${RT} ${ASOUND} ${PULSE}
     )
 endif(WIN32)
 include_directories(${CMAKE_BINARY_DIR}/external/dist/include)

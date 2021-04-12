@@ -1798,8 +1798,8 @@ void  MainFrame::initPortAudioDevice(PortAudioWrap *pa, int inDevice, int outDev
     if(inDevice != paNoDevice) {
         pa->setInputChannelCount(inputChannels);           // stereo input
         pa->setInputSampleFormat(PA_SAMPLE_TYPE);
-        pa->setInputLatency(pa->getInputDefaultHighLatency());
-        //fprintf(stderr,"PA in; low: %f high: %f\n", pa->getInputDefaultLowLatency(), pa->getInputDefaultHighLatency());
+        //pa->setInputLatency(40000);
+        fprintf(stderr,"PA in; low: %f high: %f\n", pa->getInputDefaultLowLatency(), pa->getInputDefaultHighLatency());
         pa->setInputHostApiStreamInfo(NULL);
     }
 
@@ -1811,8 +1811,8 @@ void  MainFrame::initPortAudioDevice(PortAudioWrap *pa, int inDevice, int outDev
     if(outDevice != paNoDevice) {
         pa->setOutputChannelCount(outputChannels);                      // stereo output
         pa->setOutputSampleFormat(PA_SAMPLE_TYPE);
-        pa->setOutputLatency(pa->getOutputDefaultHighLatency());
-        //fprintf(stderr,"PA out; low: %f high: %f\n", pa->getOutputDefaultLowLatency(), pa->getOutputDefaultHighLatency());
+        //pa->setOutputLatency(40000);
+        fprintf(stderr,"PA out; low: %f high: %f\n", pa->getOutputDefaultLowLatency(), pa->getOutputDefaultHighLatency());
         pa->setOutputHostApiStreamInfo(NULL);
     }
 
@@ -2102,7 +2102,7 @@ void MainFrame::startRxStream()
 
         m_rxInPa->setUserData(g_rxUserdata);
         m_rxErr = m_rxInPa->setCallback(rxCallback);
-
+        m_rxInPa->setStreamName("SC1 RxIn");
         m_rxErr = m_rxInPa->streamOpen();
 
         if(m_rxErr != paNoError) {
@@ -2142,6 +2142,7 @@ void MainFrame::startRxStream()
 
         if(two_rx) {
             m_rxOutPa->setUserData(g_rxUserdata);
+            m_rxOutPa->setStreamName("SC1 RxOut");
             m_rxErr = m_rxOutPa->setCallback(rxCallback);
 
             m_rxErr = m_rxOutPa->streamOpen();
@@ -2190,6 +2191,7 @@ void MainFrame::startRxStream()
             // could need a mutex ...
 
             m_txInPa->setUserData(g_rxUserdata);
+            m_txInPa->setStreamName("SC2 TxIn");
             m_txErr = m_txInPa->setCallback(txCallback);
             m_txErr = m_txInPa->streamOpen();
 
@@ -2246,6 +2248,7 @@ void MainFrame::startRxStream()
                 // could need a mutex ...
 
                 m_txOutPa->setUserData(g_rxUserdata);
+                m_txOutPa->setStreamName("SC2 TxOut");
                 m_txErr = m_txOutPa->setCallback(txCallback);
                 m_txErr = m_txOutPa->streamOpen();
 

@@ -20,6 +20,8 @@
 //==========================================================================
 #include "pa_wrapper.h"
 
+#include "pa_linux_pulseaudio.h"
+
 double PortAudioWrap::standardSampleRates[] =
 {
     8000.0,     9600.0,
@@ -45,7 +47,7 @@ PortAudioWrap::PortAudioWrap()
     m_pStreamFinishedCallback   = NULL;
     m_pTimeInfo                 = 0;
     m_newdata                   = false;
-
+    m_streamName                = NULL;
 //    loadData();
 }
 
@@ -78,7 +80,16 @@ PaError PortAudioWrap::streamOpen()
 //----------------------------------------------------------------
 PaError PortAudioWrap::streamStart()
 {
-    return Pa_StartStream(m_pStream);
+    PaError result = Pa_StartStream(m_pStream);
+    const PaDeviceInfo* deviceInfo = Pa_GetDeviceInfo(m_inputBuffer.device != paNoDevice ? m_inputBuffer.device: m_outputBuffer.device);
+    if (result == paNoError && m_streamName != NULL)
+    {
+        const char* apiName = Pa_GetHostApiInfo(deviceInfo->hostApi)->name;
+	if (strcmp(apiName, "PulseAudio") == 0)
+        {
+            PaPulseAudio_RenameStream(m_pStream, m_streamName);
+        }
+    }
 }
 
 //----------------------------------------------------------------

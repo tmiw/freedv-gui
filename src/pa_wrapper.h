@@ -54,11 +54,13 @@ class PortAudioWrap
         unsigned long                   m_framesPerBuffer;
         PaStreamCallbackFlags           m_statusFlags;
         bool                            m_newdata;
+        char                            *m_streamName;
 
     public:
 
         void                averageData(float mag_dB[]);
 
+	void                setStreamName(char* streamName) { m_streamName = streamName; }
         int                 getDeviceCount() { return Pa_GetDeviceCount(); }
         PaDeviceIndex       getDefaultInputDevice();
         PaDeviceIndex       getDefaultOutputDevice();
