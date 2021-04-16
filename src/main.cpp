@@ -1798,8 +1798,8 @@ void  MainFrame::initPortAudioDevice(PortAudioWrap *pa, int inDevice, int outDev
     if(inDevice != paNoDevice) {
         pa->setInputChannelCount(inputChannels);           // stereo input
         pa->setInputSampleFormat(PA_SAMPLE_TYPE);
-        //pa->setInputLatency(40000);
-        fprintf(stderr,"PA in; low: %f high: %f\n", pa->getInputDefaultLowLatency(), pa->getInputDefaultHighLatency());
+        pa->setInputLatency(pa->getInputDefaultHighLatency());
+        //fprintf(stderr,"PA in; low: %f high: %f\n", pa->getInputDefaultLowLatency(), pa->getInputDefaultHighLatency());
         pa->setInputHostApiStreamInfo(NULL);
     }
 
@@ -1811,8 +1811,8 @@ void  MainFrame::initPortAudioDevice(PortAudioWrap *pa, int inDevice, int outDev
     if(outDevice != paNoDevice) {
         pa->setOutputChannelCount(outputChannels);                      // stereo output
         pa->setOutputSampleFormat(PA_SAMPLE_TYPE);
-        //pa->setOutputLatency(40000);
-        fprintf(stderr,"PA out; low: %f high: %f\n", pa->getOutputDefaultLowLatency(), pa->getOutputDefaultHighLatency());
+        pa->setOutputLatency(pa->getOutputDefaultHighLatency());
+        //fprintf(stderr,"PA out; low: %f high: %f\n", pa->getOutputDefaultLowLatency(), pa->getOutputDefaultHighLatency());
         pa->setOutputHostApiStreamInfo(NULL);
     }
 
