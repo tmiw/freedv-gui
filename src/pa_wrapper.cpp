@@ -87,7 +87,10 @@ PaError PortAudioWrap::streamStart()
         const char* apiName = Pa_GetHostApiInfo(deviceInfo->hostApi)->name;
 	if (strcmp(apiName, "PulseAudio") == 0)
         {
-            PaPulseAudio_RenameStream(m_pStream, m_streamName);
+            if (m_inputBuffer.device != paNoDevice)
+                PaPulseAudio_RenameSource(m_pStream, m_streamName);
+            else
+                PaPulseAudio_RenameSink(m_pStream, m_streamName);
         }
     }
 }
